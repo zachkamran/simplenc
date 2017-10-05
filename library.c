@@ -82,7 +82,7 @@ int server_listen(char *host, char* port, int udp)
     memset(&hints,0,sizeof(hints));
     const char* hostname;
     if (host)
-        const char* hostname= host; /* wildcard */
+        hostname= host; /* wildcard */
 
     else {
         hostname = 0;
