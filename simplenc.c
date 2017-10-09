@@ -9,22 +9,56 @@
 #include <errno.h>
 
 
-int handle_session(int session);
+int handle_session(int session, int client);
 int init_connect(char *host,char *port,int udp);
-void *read_socket(void *arg);
+int read_socket(int sockfd);
 int server_listen(char *host, char* port, int udp);
 int send_stdin(int sockfd);
+void *read_socket_client(void* arg);
+void *read_stdin_server(void *arg);
 
-
-int handle_session(int sockfd)
+int handle_session(int sockfd, int client)
 {
-    pthread_t thread_id;
-    if(pthread_create(&thread_id, NULL, read_socket, &sockfd)!=0){
-        fprintf(stderr, "error in handle session pthread create");
-        exit(1);
+    if (client) {
+        send_stdin(sockfd);
+        pthread_t thread_id;
+        if(pthread_create(&thread_id, NULL, read_socket_client, &sockfd)!=0){
+            fprintf(stderr, "error in handle session pthread create");
+            exit(1);
+       }
+    }else {
+        read_socket(sockfd);
+        pthread_t thread_id;
+        if (pthread_create(&thread_id, NULL, read_stdin_server, &sockfd) != 0) {
+            fprintf(stderr, "error in handle session pthread create");
+            exit(1);
+        }
     }
-    send_stdin(sockfd);
+
+    return 1;
 }
+
+void *read_socket_client(void* arg)
+{
+    int sockfd = (int)arg;
+    char data[2048];
+    int len;
+    while(1){
+        memset(&data,0, sizeof(data));
+        len = read(sockfd, data, sizeof(data) -1);
+
+
+        if (!len){
+            close(sockfd);
+            exit(0);
+        }
+
+        fprintf(stdout,"%s", data);
+    }
+
+}
+
+
 
 int init_connect(char *host,char *port,int udp){
     int sockfd;
@@ -35,17 +69,14 @@ int init_connect(char *host,char *port,int udp){
     hints.ai_family = AF_INET;
     if (udp) {
         hints.ai_socktype = SOCK_DGRAM; // for UDP
-        if ((rv = getaddrinfo(host,port, &hints, &servinfo)) !=0) {
-            fprintf(stderr, "internal error in TCP get addr info");
-            exit(1);
-        }
-    } else {
+    }else {
         hints.ai_socktype = SOCK_STREAM; // for TCP
-        if ((rv = getaddrinfo(host,port, &hints, &servinfo)) !=0) {
-            fprintf(stderr, "internal error in TCP get addr info");
+    }
+    if ( getaddrinfo(host,port, &hints, &servinfo) !=0) {
+        fprintf(stderr, "internal error in TCP get addr info\n");
             exit(1);
         }
-    }
+
     // loop through all results and connect to thd first we can
     for(p = servinfo; p!=NULL; p = p->ai_next) {
         if ((sockfd = socket(p->ai_family, p->ai_socktype,
@@ -65,28 +96,64 @@ int init_connect(char *host,char *port,int udp){
     }
 
 
-    handle_session(sockfd);
+    handle_session(sockfd, 1);
+    return 1;
 
 }
 
-void *read_socket(void *arg){
+
+void *read_stdin_server(void *arg){
+// arg is the socket to send on
     int sockfd = (int)arg;
+    char buf[2048];
+    char* input;
+    while(1) {
+        memset(&buf, 0, sizeof(buf));
+        input = fgets(buf, sizeof(buf), stdin);
+        if (!input) {
+            close(sockfd);
+            exit(0);
+        }
+
+        write(sockfd, buf, sizeof(buf));
+
+
+    }
+}
+
+int read_socket(int sockfd){
     char data[2048];
+    int len;
     while(1){
-        read(sockfd, data, 2048);
+        memset(&data,0, sizeof(data));
+        len = read(sockfd, data, sizeof(data) -1);
+
+
+        if (!len){
+            close(sockfd);
+            exit(0);
+        }
+
         fprintf(stdout,"%s", data);
     }
+    return 1;
+
 }
 
 int send_stdin(int sockfd){
 // arg is the socket to send on
     char buf[2048];
-    while(1){
-        ssize_t bytes = read(STDIN_FILENO,buf,2048);
-        if (bytes==0){
+    char* input;
+    while(1) {
+        memset(&buf, 0, sizeof(buf));
+        input = fgets(buf, sizeof(buf), stdin);
+        if (!input) {
             close(sockfd);
             exit(0);
         }
+
+        write(sockfd, buf, sizeof(buf));
+
 
     }
 }
@@ -133,20 +200,30 @@ int server_listen(char *host, char* port, int udp)
         fprintf(stderr, "internal error in server listen listen call");
         exit(1);
     }
+    int session_fd=accept(server_fd,0,0);
 
-    // now start accepting connections as they arrive
-    for (;;) {
-        int session_fd=accept(server_fd,0,0);
-        if (session_fd==-1) {
-            if (errno==EINTR) continue;
-            fprintf(stderr, "internal error in server listen accept call");
-        }
-        else {
-            handle_session(session_fd);
-            close(session_fd);
-            exit(0);
-        }
+    if (session_fd==-1) {
+        fprintf(stderr, "internal error in server listen accept call");
+        exit(1);
     }
+    else {
+        handle_session(session_fd, 0);
+        close(session_fd);
+        exit(0);
+    }
+    // now start accepting connections as they arrive
+//    for (;;) {
+//        int session_fd=accept(server_fd,0,0);
+//        if (session_fd==-1) {
+//            if (errno==EINTR) continue;
+//            fprintf(stderr, "internal error in server listen accept call");
+//        }
+//        else {
+//            handle_session(session_fd);
+//            close(session_fd);
+//            exit(0);
+//        }
+//    }
 
 }
 
@@ -167,11 +244,15 @@ int main(int argc, char *argv[]) {
                 break;
         }
     }
+
     int server = 0, client=0;
+    port = argv[argc-1];
+    hostname = argv[argc-2];
     if (listen)
         server = server_listen(hostname, port, udp);
-    else
-       client =  init_connect(hostname, port, udp);
+    else {
+        client = init_connect(hostname, port, udp);
+    }
 }
 
 // create connection for not listening
@@ -211,3 +292,26 @@ int main(int argc, char *argv[]) {
 //
 //memset(&servaddr, 0, sizeof(servaddr));
 //servaddr.sin_family = AF_INET;
+
+
+//
+//int handle_session(int sockfd){
+//    char data[2048];
+//    char buf[2048];
+//    size_t len;
+//    while(1){
+//        len = read(sockfd, data, 2048);
+//        data[len] = '\0';
+//        fprintf(stdout,"%s", data);
+//
+//        memset(&buf,0, sizeof(buf));
+//        ssize_t bytes = read(0,buf,2048);
+//
+//        if (bytes==0){
+//            close(sockfd);
+//            exit(0);
+//        }
+//
+//        send(sockfd, buf, strlen(buf) +1,0);
+//    }
+//}
