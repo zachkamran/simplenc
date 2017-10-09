@@ -11,14 +11,19 @@
 
 int handle_session(int session);
 int init_connect(char *host,char *port,int udp);
-int read_socket(void *arg);
+void *read_socket(void *arg);
 int server_listen(char *host, char* port, int udp);
+int send_stdin(int sockfd);
 
 
-int handle_session(int session)
+int handle_session(int sockfd)
 {
-    // TODO
-    return -1;
+    pthread_t thread_id;
+    if(pthread_create(&thread_id, NULL, read_socket, &sockfd)!=0){
+        fprintf(stderr, "error in handle session pthread create");
+        exit(1);
+    }
+    send_stdin(sockfd);
 }
 
 int init_connect(char *host,char *port,int udp){
@@ -41,7 +46,7 @@ int init_connect(char *host,char *port,int udp){
             exit(1);
         }
     }
-    // loop through all results and connect to thje first we can
+    // loop through all results and connect to thd first we can
     for(p = servinfo; p!=NULL; p = p->ai_next) {
         if ((sockfd = socket(p->ai_family, p->ai_socktype,
                              p->ai_protocol)) == -1) {
@@ -59,21 +64,32 @@ int init_connect(char *host,char *port,int udp){
         exit(2);
     }
 
-    pthread_t read_thread;
 
     handle_session(sockfd);
 
 }
 
-int read_socket(void *arg){
+void *read_socket(void *arg){
     int sockfd = (int)arg;
-    char data[1400];
+    char data[2048];
     while(1){
-        read(sockfd, data, 1400);
+        read(sockfd, data, 2048);
         fprintf(stdout,"%s", data);
     }
 }
 
+int send_stdin(int sockfd){
+// arg is the socket to send on
+    char buf[2048];
+    while(1){
+        ssize_t bytes = read(STDIN_FILENO,buf,2048);
+        if (bytes==0){
+            close(sockfd);
+            exit(0);
+        }
+
+    }
+}
 
 int server_listen(char *host, char* port, int udp)
 {
@@ -125,17 +141,10 @@ int server_listen(char *host, char* port, int udp)
             if (errno==EINTR) continue;
             fprintf(stderr, "internal error in server listen accept call");
         }
-
-        pid_t pid=fork();
-        if (pid==-1) {
-            fprintf(stderr, "internal error in server listen pid fork");
-        } else if (pid==0) {
-            close(server_fd);
+        else {
             handle_session(session_fd);
             close(session_fd);
             exit(0);
-        } else {
-            close(session_fd);
         }
     }
 
