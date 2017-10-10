@@ -6,7 +6,7 @@
 #include <netdb.h>
 #include <string.h>
 #include <pthread.h>
-#include <errno.h>
+
 
 
 int handle_session(int session, int client);
@@ -15,34 +15,37 @@ int read_socket(int sockfd);
 int server_listen(char *host, char* port, int udp);
 int send_stdin(int sockfd);
 void *read_socket_client(void* arg);
-void *read_stdin_server(void *arg);
+void *send_stdin_server(void *arg);
 
 int handle_session(int sockfd, int client)
 {
+//    pthread_t thread_id;
     if (client) {
+//        if(pthread_create(&thread_id, NULL, read_socket_client, (void*)&sockfd)!=0){
+//            fprintf(stderr, "error in handle session pthread create");
+//            exit(1);
+//        }
         send_stdin(sockfd);
-        pthread_t thread_id;
-        if(pthread_create(&thread_id, NULL, read_socket_client, &sockfd)!=0){
-            fprintf(stderr, "error in handle session pthread create");
-            exit(1);
-       }
+
+
     }else {
+//        if (pthread_create(&thread_id, NULL, send_stdin_server, (void*)&sockfd) != 0) {
+//            fprintf(stderr, "error in handle session pthread create");
+//            exit(1);
+//        }
         read_socket(sockfd);
-        pthread_t thread_id;
-        if (pthread_create(&thread_id, NULL, read_stdin_server, &sockfd) != 0) {
-            fprintf(stderr, "error in handle session pthread create");
-            exit(1);
-        }
     }
 
     return 1;
 }
+
 
 void *read_socket_client(void* arg)
 {
     int sockfd = (int)arg;
     char data[2048];
     int len;
+    printf("hello fromr ead socket client thread");
     while(1){
         memset(&data,0, sizeof(data));
         len = read(sockfd, data, sizeof(data) -1);
@@ -53,7 +56,7 @@ void *read_socket_client(void* arg)
             exit(0);
         }
 
-        fprintf(stdout,"%s", data);
+        printf("%s", data);
     }
 
 }
@@ -78,7 +81,8 @@ int init_connect(char *host,char *port,int udp){
         }
 
     // loop through all results and connect to thd first we can
-    for(p = servinfo; p!=NULL; p = p->ai_next) {
+
+    for (p = servinfo; p != NULL; p = p->ai_next) {
         if ((sockfd = socket(p->ai_family, p->ai_socktype,
                              p->ai_protocol)) == -1) {
             continue;
@@ -90,23 +94,24 @@ int init_connect(char *host,char *port,int udp){
         }
         break;
     }
-    if (p==NULL){
+    if (p == NULL) {
         fprintf(stderr, "internal error looped off end of list");
         exit(2);
     }
 
-
     handle_session(sockfd, 1);
     return 1;
+
 
 }
 
 
-void *read_stdin_server(void *arg){
+void *send_stdin_server(void *arg){
 // arg is the socket to send on
     int sockfd = (int)arg;
     char buf[2048];
     char* input;
+    printf("hello from send stdin server thread");
     while(1) {
         memset(&buf, 0, sizeof(buf));
         input = fgets(buf, sizeof(buf), stdin);
@@ -116,7 +121,6 @@ void *read_stdin_server(void *arg){
         }
 
         write(sockfd, buf, sizeof(buf));
-
 
     }
 }
@@ -196,35 +200,25 @@ int server_listen(char *host, char* port, int udp)
         exit(1);
     }
     freeaddrinfo(res);
-    if (listen(server_fd,SOMAXCONN)) {
-        fprintf(stderr, "internal error in server listen listen call");
-        exit(1);
-    }
-    int session_fd=accept(server_fd,0,0);
+    if(!udp) {
+        if (listen(server_fd, SOMAXCONN)) {
+            fprintf(stderr, "internal error in server listen listen call");
+            exit(1);
+        }
+        int session_fd = accept(server_fd, 0, 0);
 
-    if (session_fd==-1) {
-        fprintf(stderr, "internal error in server listen accept call");
-        exit(1);
+        if (session_fd == -1) {
+            fprintf(stderr, "internal error in server listen accept call");
+            exit(1);
+        } else {
+            handle_session(session_fd, 0);
+            close(session_fd);
+            exit(0);
+        }
     }
-    else {
-        handle_session(session_fd, 0);
-        close(session_fd);
-        exit(0);
-    }
-    // now start accepting connections as they arrive
-//    for (;;) {
-//        int session_fd=accept(server_fd,0,0);
-//        if (session_fd==-1) {
-//            if (errno==EINTR) continue;
-//            fprintf(stderr, "internal error in server listen accept call");
-//        }
-//        else {
-//            handle_session(session_fd);
-//            close(session_fd);
-//            exit(0);
-//        }
-//    }
-
+    handle_session(server_fd, 0);
+    close(server_fd);
+    exit(0);
 }
 
 
@@ -244,9 +238,23 @@ int main(int argc, char *argv[]) {
                 break;
         }
     }
+    if ((argc > 5) || (argc < 2)){
+        printf(usage);
+        exit(1);
+    }
+    if ((listen && udp && argc ==4) ||(listen && !udp && argc ==3) ) {
+        hostname = "localhost";
+        port = argv[argc - 1];
+    }
+    else if((listen && udp && argc==5) ||(listen && !udp && argc ==4)){
+        hostname = argv[argc-2];
+        port = argv[argc-1];
+    }
+
 
     int server = 0, client=0;
     port = argv[argc-1];
+
     hostname = argv[argc-2];
     if (listen)
         server = server_listen(hostname, port, udp);
